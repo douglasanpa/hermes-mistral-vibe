@@ -190,6 +190,24 @@ def auth_handler(action, args):
     return False
 
 
+def _affinity_id(messages):
+    """Stable per-conversation id: hash of the first system and first user message."""
+    import hashlib, json
+    if not isinstance(messages, list):
+        return None
+    first = {}
+    for m in messages:
+        role = m.get('role') if isinstance(m, dict) else None
+        if role in ('system', 'user') and role not in first:
+            first[role] = m.get('content')
+        if len(first) == 2:
+            break
+    if not first:
+        return None
+    raw = json.dumps(first, sort_keys=True, ensure_ascii=False, default=str)
+    return 'hermes-' + hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
+
+
 class GuardedClient:
     """Validation is deferred: Hermes swallows create_client hook exceptions."""
     # Preserve this guard instead of rebuilding an unguarded AsyncOpenAI client.
@@ -271,6 +289,11 @@ class GuardedClient:
                 http_client=httpx.Client(transport=httpx.HTTPTransport(),
                     follow_redirects=False, trust_env=False, timeout=60))
             self._client_key_fingerprint = key_fingerprint
+        affinity = _affinity_id(kwargs.get('messages'))
+        if affinity:
+            # Same header the official Vibe client sends: keeps one conversation
+            # on one cache node so the prompt prefix cache is actually reused.
+            kwargs['extra_headers'] = {'x-affinity': affinity}
         return self._client.chat.completions.create(**kwargs)
 
     def close(self):

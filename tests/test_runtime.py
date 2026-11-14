@@ -72,3 +72,22 @@ class FallbackBindingTests(unittest.TestCase):
         _swap_fallback_clients(agent, client, 'mistral-vibe', MODEL, BASE, 'chat_completions')
         self.assertIs(agent.client, client)
         self.assertEqual(agent._client_kwargs['base_url'], BASE)
+
+class AffinityTests(unittest.TestCase):
+    def test_affinity_is_stable_per_conversation_and_sent_as_header(self):
+        from vibe_provider import _affinity_id, GuardedClient
+        conv = [{'role': 'system', 'content': 'sys'}, {'role': 'user', 'content': 'task A'}]
+        later = conv + [{'role': 'assistant', 'content': 'x'}, {'role': 'user', 'content': 'more'}]
+        other = [{'role': 'system', 'content': 'sys'}, {'role': 'user', 'content': 'task B'}]
+        self.assertEqual(_affinity_id(conv), _affinity_id(later))
+        self.assertNotEqual(_affinity_id(conv), _affinity_id(other))
+        self.assertIsNone(_affinity_id(None))
+        seen = []
+        def fake(req):
+            seen.append(req.headers.get('x-affinity'))
+            return httpx.Response(200, json={'id':'f','object':'chat.completion','created':0,'model':MODEL,
+                'choices':[{'index':0,'message':{'role':'assistant','content':'ok'},'finish_reason':'stop'}],
+                'usage':{'prompt_tokens':1,'completion_tokens':1,'total_tokens':2}})
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {'HERMES_HOME':home, 'MISTRAL_VIBE_API_KEY':'fake-key'}), patch('httpx.HTTPTransport', return_value=httpx.MockTransport(fake)):
+            GuardedClient(base_url=BASE).create(model=MODEL, messages=later)
+        self.assertEqual(seen, [_affinity_id(conv)])
