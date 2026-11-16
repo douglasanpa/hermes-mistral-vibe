@@ -91,3 +91,10 @@ class AffinityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {'HERMES_HOME':home, 'MISTRAL_VIBE_API_KEY':'fake-key'}), patch('httpx.HTTPTransport', return_value=httpx.MockTransport(fake)):
             GuardedClient(base_url=BASE).create(model=MODEL, messages=later)
         self.assertEqual(seen, [_affinity_id(conv)])
+
+    def test_affinity_merges_with_existing_extra_headers(self):
+        from vibe_provider import _with_affinity, _affinity_id
+        msgs = [{'role': 'user', 'content': 'x'}]
+        kw = _with_affinity({'messages': msgs, 'extra_headers': {'traceparent': '00-abc-def-01', 'X-Affinity': 'stale'}})
+        self.assertEqual(kw['extra_headers'], {'traceparent': '00-abc-def-01', 'x-affinity': _affinity_id(msgs)})
+        self.assertNotIn('extra_headers', _with_affinity({'messages': None}))

@@ -208,6 +208,18 @@ def _affinity_id(messages):
     return 'hermes-' + hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
 
 
+def _with_affinity(kwargs):
+    """Add the per-conversation ``x-affinity`` header, as the official Vibe client
+    does, merged into any headers already present (never replacing them)."""
+    affinity = _affinity_id(kwargs.get('messages'))
+    if affinity:
+        headers = {k: v for k, v in dict(kwargs.get('extra_headers') or {}).items()
+                   if str(k).lower() != 'x-affinity'}
+        headers['x-affinity'] = affinity
+        kwargs['extra_headers'] = headers
+    return kwargs
+
+
 class GuardedClient:
     """Validation is deferred: Hermes swallows create_client hook exceptions."""
     # Preserve this guard instead of rebuilding an unguarded AsyncOpenAI client.
@@ -289,11 +301,7 @@ class GuardedClient:
                 http_client=httpx.Client(transport=httpx.HTTPTransport(),
                     follow_redirects=False, trust_env=False, timeout=60))
             self._client_key_fingerprint = key_fingerprint
-        affinity = _affinity_id(kwargs.get('messages'))
-        if affinity:
-            # Same header the official Vibe client sends: keeps one conversation
-            # on one cache node so the prompt prefix cache is actually reused.
-            kwargs['extra_headers'] = {'x-affinity': affinity}
+        _with_affinity(kwargs)
         return self._client.chat.completions.create(**kwargs)
 
     def close(self):
