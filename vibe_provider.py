@@ -208,6 +208,10 @@ def _affinity_id(messages):
     return 'hermes-' + hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
 
 
+# Headers the plugin itself adds; the request guard lets exactly these through.
+_PLUGIN_HEADERS = frozenset({'x-affinity'})
+
+
 def _with_affinity(kwargs):
     """Add the per-conversation ``x-affinity`` header, as the official Vibe client
     does, merged into any headers already present (never replacing them)."""
@@ -281,9 +285,17 @@ class GuardedClient:
             kwargs.pop('extra_body', None)
             if 'response_format' in body:
                 kwargs.setdefault('response_format', body['response_format'])
+        # The plugin authors x-affinity itself (any caller value is overwritten),
+        # then the guard runs: the only header allowed through is on the explicit
+        # allowlist, so nothing caller-controlled reaches the wire.
+        _with_affinity(kwargs)
+        extra_headers = kwargs.get('extra_headers') or {}
+        rejected = sorted(str(k) for k in extra_headers if str(k).lower() not in _PLUGIN_HEADERS)
         if (str(self.kwargs.get('base_url') or BASE).rstrip('/') != BASE
-                or any(kwargs.get(k) for k in ('extra_headers', 'extra_body', 'extra_query'))):
-            raise RuntimeError('Provider restricted to its fixed origin and request headers')
+                or rejected
+                or any(kwargs.get(k) for k in ('extra_body', 'extra_query'))):
+            detail = f" (rejected headers: {', '.join(rejected)})" if rejected else ''
+            raise RuntimeError('Provider restricted to its fixed origin and request headers' + detail)
         key = dedicated_key()
         if not key:
             raise RuntimeError('Missing dedicated MISTRAL_VIBE_API_KEY; run hermes auth add mistral-vibe')
@@ -301,7 +313,6 @@ class GuardedClient:
                 http_client=httpx.Client(transport=httpx.HTTPTransport(),
                     follow_redirects=False, trust_env=False, timeout=60))
             self._client_key_fingerprint = key_fingerprint
-        _with_affinity(kwargs)
         return self._client.chat.completions.create(**kwargs)
 
     def close(self):
