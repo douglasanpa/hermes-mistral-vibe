@@ -173,10 +173,15 @@ class ContextWindowTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
     def test_profile_claims_the_mistral_host_for_metadata_only(self):
+        import providers
         from providers import profile_for_host, register_provider
         register_provider(vp.profile)
-        self.assertIs(profile_for_host(vp.BASE, metadata=True), vp.profile)
-        self.assertIsNot(profile_for_host(vp.BASE), vp.profile, 'must not claim the host for wire routing')
+        # The per-home host memo can be primed by an earlier test; compare by name.
+        getattr(providers, '_HOST_PROFILE_MEMO', {}).clear()
+        found = profile_for_host(vp.BASE, metadata=True)
+        self.assertEqual(getattr(found, 'name', None), vp.profile.name)
+        wire = profile_for_host(vp.BASE)
+        self.assertNotEqual(getattr(wire, 'name', None), vp.profile.name, 'must not claim the host for wire routing')
 
     def test_real_hermes_resolution_uses_the_catalog_window(self):
         from agent.model_metadata import get_model_context_length
